@@ -1,0 +1,13 @@
+/* A simple robot that echoes bluetooth messages. */
+
+#define IN_QUEUE 0x0
+#define OUT_QUEUE 0x1
+
+task main() {
+	string msg_in;
+	while (true) {
+		until (ReceiveMessage(IN_QUEUE, true, msg_in) == NO_ERR);
+		string msg_out = StrCat("Robot says: ", msg_in);
+		SendMessage(OUT_QUEUE, msg_out);
+	}
+}
