@@ -1,9 +1,14 @@
 import subprocess
+import threading
+import time
 
-class NXT(object):
+# TODO(jhibberd) Add a mutex to send/read calls.
+
+class MsgChannel(object):
     """Functions for sending and receiving messages with an NXT brick.
     
-    All communication with the NXT brick is made using the NeXTTool utility:
+    All communication with the NXT brick is made over Bluetooth using the 
+    NeXTTool utility:
     http://wiki.zenerves.net/index.php/NexTTool_manual
     """
     
@@ -21,21 +26,42 @@ class NXT(object):
         # communication.
         self.nxt_alias = nxt_alias
     
-    def send_message(self, msg):        
+    def send(self, msg):        
         """Send a message string to an NXT brick."""
         return self._cmd(['/Inbox=%s' % self.OUT_QUEUE, '-msg='+msg])
     
-    def read_message(self):
+    def read(self):
         """Read (pop) a message from an NXT brick.
         
         The message string is a list of ASCII character codes separated by
         newline characters. The message is decoded before being returned.
         """
         msg = self._cmd(['/Empty', '-readmsg=%s' % self.IN_QUEUE])
+        if not msg:
+            return None
         chars = map(lambda x: chr(int(x)), msg.rstrip('\n').split('\n'))
         return ''.join(chars)
     
     def _cmd(self, args):
         args = ['nexttool', '/Com='+self.nxt_alias]+args
         pipe = subprocess.Popen(args, stdout=subprocess.PIPE)
-        return pipe.stdout.read()    
+        return pipe.stdout.read() 
+    
+    
+class InboundMsgDispatch(object):
+    """Class that repeatedly and indefinitely polls the NXT brick for inbound
+    messages destined for the host. On receiving a msg a user supplied callback
+    function is called with the message as an argument.
+    """
+    
+    POLL_WAIT = 1
+            
+    @classmethod
+    def start(cls, msg_channel, callback):
+        def f(msg_channel, callback):
+            while True:
+                msg = msg_channel.read()
+                if msg:
+                    callback(msg)
+                time.sleep(cls.POLL_WAIT)
+        threading.Thread(target=f, args=(msg_channel, callback)).start()
