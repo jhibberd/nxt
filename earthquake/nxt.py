@@ -2,8 +2,6 @@ import subprocess
 import threading
 import time
 
-# TODO(jhibberd) Add a mutex to send/read calls.
-
 class MsgChannel(object):
     """Functions for sending and receiving messages with an NXT brick.
     
@@ -20,6 +18,10 @@ class MsgChannel(object):
     # for outbound messages.
     OUT_QUEUE = 0
     IN_QUEUE = 1
+        
+    # To prevent overloading the NXT brick restrict communication to a single
+    # read or send request at a time.
+    mutex = threading.Lock()
         
     def __init__(self, nxt_alias):
         # NXT brick aliases are stored in ~/nxt.dat and used for bluetooth
@@ -43,9 +45,12 @@ class MsgChannel(object):
         return ''.join(chars)
     
     def _cmd(self, args):
+        MsgChannel.mutex.acquire()
         args = ['nexttool', '/Com='+self.nxt_alias]+args
         pipe = subprocess.Popen(args, stdout=subprocess.PIPE)
-        return pipe.stdout.read() 
+        result = pipe.stdout.read()
+        MsgChannel.mutex.release()
+        return result 
     
     
 class InboundMsgDispatch(object):
@@ -55,13 +60,19 @@ class InboundMsgDispatch(object):
     """
     
     POLL_WAIT = 1
+    stop_sig = None
             
     @classmethod
     def start(cls, msg_channel, callback):
+        cls.stop_sig = False
         def f(msg_channel, callback):
-            while True:
+            while not cls.stop_sig:
                 msg = msg_channel.read()
                 if msg:
                     callback(msg)
                 time.sleep(cls.POLL_WAIT)
         threading.Thread(target=f, args=(msg_channel, callback)).start()
+        
+    @classmethod
+    def stop(cls):
+        cls.stop_sig = True

@@ -1,36 +1,59 @@
-# NOTE: Needs to be run as root.
+#!/usr/bin/python
 
-#import nxt
-#import time
-#
-#def callback(msg):
-#    print 'IN: %s' % msg
-#
-#msg_channel = nxt.MsgChannel('bt')
-#nxt.InboundMsgDispatch.start(msg_channel, callback)
-#print 'Printing start'
-#msg_channel.send('james')
-#msg_channel.send('cake')
-#print 'Printing end'
-#
-#time.sleep(10)
-
+import nxt
+import os.path
 import tornado.ioloop
 import tornado.web
+import tornado.websocket        
+    
+class StreamSocketHandler(tornado.websocket.WebSocketHandler):
+    waiters = set()
+
+    def open(self):
+        StreamSocketHandler.waiters.add(self)
+        StreamSocketHandler.send_msg('Web socket open.')
+
+    def on_close(self):
+        StreamSocketHandler.waiters.remove(self)
+
+    @classmethod
+    def send_msg(cls, msg):
+        for waiter in cls.waiters:
+            waiter.write_message(msg)
+
 
 class MainHandler(tornado.web.RequestHandler):
     def get(self):
-        self.write("Hello, world")
+        self.render("main.html")
 
+        
+class StartHandler(tornado.web.RequestHandler):
+    
+    def post(self):
+        msg_channel = nxt.MsgChannel('bt')
+        nxt.InboundMsgDispatch.start(msg_channel, StreamSocketHandler.send_msg)
+        StreamSocketHandler.send_msg('NXT channel open.')        
+       
+        
+class StopHandler(tornado.web.RequestHandler):
+    
+    def post(self):
+        nxt.InboundMsgDispatch.stop()
+        StreamSocketHandler.send_msg('NXT channel closed.') 
+       
+       
+app_dir = os.path.dirname(os.path.abspath(__file__)) 
+settings = {
+    'static_path': app_dir
+    }
 application = tornado.web.Application([
-    (r"/", MainHandler),
-])
+    (r"/",          MainHandler),
+    (r"/start",     StartHandler),
+    (r"/stop",      StopHandler),
+    (r"/stream",    StreamSocketHandler),
+], **settings)
 
 if __name__ == "__main__":
     application.listen(8888)
     tornado.ioloop.IOLoop.instance().start()
-    
-# TODO(jhibberd) Implement HTTPMsgDispatch that forwards to localhost
-# TODO(jhibberd) Create HTML UI that opens web socket.
-# TODO(jhibberd) Server to push received messages to client over socket:
-# https://github.com/facebook/tornado/blob/master/demos/websocket/chatdemo.py
+
