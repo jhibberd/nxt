@@ -1,0 +1,238 @@
+/* Techbricks.nl Line Follower
+   Based on a PID controller, using the NXT 2.0 color sensor
+   NXC firmware 1.28
+   www.techbricks.nl
+   last modified 03/03/2010                                    */
+
+/* Proportional gain, straight forward reaction of the controller
+   Larger values typically mean faster response since the larger the error,
+   the larger the proportional term compensation.
+   An excessively large proportional gain will lead to process instability and oscillation.*/
+#define Kproportional 2
+
+/* Integral gain, improves the controller accuracy
+   Larger values imply steady state errors are eliminated more quickly.
+   The trade-off is larger overshoot: any negative error integrated during transient response
+   must be integrated away by positive error before reaching steady state.*/
+//#define Kintegral 0.0002
+#define Kintegral 0.0001
+
+/* Derivative gain, improves the controller speed
+   Larger values decrease overshoot, but slow down transient response
+   and may lead to instability due to signal noise amplification in the differentiation of the error.*/
+//#define Kderivative 100
+#define Kderivative 40
+
+// Sample time, determined the reaction rate
+//#define dt 20
+#define dt 1000
+
+// NXT 2.0 Color sensor connected to port 2.
+#define COLORSENSOR SENSOR_1
+
+// NOTE: If -1 then it means the error has been processed and waiting for next
+// error to be produced by scanner.
+int error2 = 0;
+
+// NOTE: Should probably have accompanying bool to say whether it has been set.
+int error_stable = -999;
+int error_cycle_lowest = 0;
+bool error_cycle_lowest_set = false;
+
+// NOTE: Starts in rightmost position.
+// This performs scan *cycles*
+#define SCAN_ANGLE 60
+#define SCAN_SPEED 10
+task scan_color_sensor() {
+	while (true) {
+		RotateMotor(OUT_C, SCAN_SPEED, SCAN_ANGLE);
+		RotateMotor(OUT_C, -SCAN_SPEED, SCAN_ANGLE);
+		// If at this point error_this_scan is empty then there is no line
+		// to be found.
+		error_stable = error_cycle_lowest;
+		error_cycle_lowest = 0;
+		error_cycle_lowest_set = false;
+	}
+}
+
+// NOTE: rotation 0=far right, 60(SCAN_ANGLE)=far left
+task read_color_sensor() {
+	float setpoint = 1;
+	while (true) {
+		// Returns angle between 0 (far left) and SCAN_ANGLE (far right)
+		// An angle of SCAN_ANGLE/2 should be straight ahead
+		long rotation = MotorRotationCount(OUT_C);
+		NumOut(50,LCD_LINE2,rotation);
+		TextOut(50, LCD_LINE4, "        ");
+		NumOut(50,LCD_LINE4,error_cycle_lowest);
+		TextOut(50, LCD_LINE6, "        ");
+		NumOut(50,LCD_LINE6,error_stable);
+		float actual_position = COLORSENSOR;
+   		int error = setpoint - actual_position;
+   		if (error == 0) {	
+   			// 0 => +30, 60 => -30
+   			// angle - 30... angle = -angle
+   			int error3 = rotation - (SCAN_ANGLE/2);
+   			error3 = -error3;
+   			
+   			// Need error that's closest to zero (on either side)
+   			// can use abs(error3)
+   			if (!error_cycle_lowest_set || abs(error3) < abs(error_cycle_lowest)) {
+   				error_cycle_lowest = error3;
+   				error_cycle_lowest_set = true;
+   			}
+   			
+   			NumOut(50,LCD_LINE3,error3);
+   		}	
+   }
+}
+
+task main()
+{
+int error = 0;
+float previous_error = 0;
+float setpoint = 0;
+float actual_position = 0;
+float proportional = 0;
+int integral = 0;
+float derivative = 0;
+float output = 0;
+float left = 0;
+float right = 0;
+
+// Set the motor speed.
+float speed=20;
+
+// Set the color sensor light on.
+SetSensorColorFull(IN_1);
+
+// Read the value from the light sensor at the start position. The sensor must be place above the black line.
+TextOut(1,LCD_LINE1,"Setpoint");
+setpoint = COLORSENSOR;
+NumOut(50,LCD_LINE1,setpoint);
+
+Precedes(scan_color_sensor, read_color_sensor);
+
+/*
+// never ending loop.
+while (true)
+  {
+   // Read the actual color sensor value.
+   actual_position = COLORSENSOR;
+   TextOut(1,LCD_LINE2,"Actual");
+   NumOut(50,LCD_LINE2,actual_position);
+
+
+	PlayTone(TONE_B7, 1);
+	
+
+
+   // Calculate the error, the differance between the setpoint and actual position.
+   error = setpoint - actual_position;
+   // Play a sound when the sensor is off the line
+   if (error <> 0) {	
+   	
+   	
+   		PlayTone(TONE_B7, 1);
+   		
+   		bool hit = false;
+   		for (int i = 0; i < 35; i++) {
+   			OnRev(OUT_A, 30);
+   			OnFwd(OUT_B, 30);
+   			Wait(30);
+   			actual_position = COLORSENSOR;
+   			if (actual_position == setpoint) {
+   				PlayTone(TONE_B7, 1);
+   				PlayTone(TONE_B3, 1);
+   				PlayTone(TONE_B7, 1);
+   				PlayTone(TONE_B3, 1);
+   				hit = true;
+   				break;
+   			}
+   		}
+   	
+   		if (!hit) {
+   			
+   			// back to middle
+   			OnRev(OUT_B, 30);
+	   		OnFwd(OUT_A, 30);
+   			Wait(30 * 35);
+   			
+	     	for (int i = 0; i < 35; i++) {
+	   			OnRev(OUT_B, 30);
+	   			OnFwd(OUT_A, 30);
+	   			Wait(30);
+	   			actual_position = COLORSENSOR;
+	   			if (actual_position == setpoint) {
+	   				PlayTone(TONE_B7, 1);
+	   				PlayTone(TONE_B7, 1);
+	   				PlayTone(TONE_B7, 1);
+	   				PlayTone(TONE_B3, 1);	   				
+	   				hit = true;
+	   				break;
+	   			}
+	   		}
+	   	}
+	   	error = 0;
+   		PlayTone(TONE_B3, 1);
+   }
+
+   // Proportional term makes a change to the output that is proportional to the current error value.
+   //proportional = Kproportional * error;
+
+   // Integrate, sum of errors
+   //integral = integral + error;
+
+   // Derivative, rate of change of the process error is calculated by determining the slope of the error over time.
+   //derivative = (error - previous_error) / dt;
+
+   // Calculate sum of Proportional, Integral and Derivative.
+   //output = proportional + Kintegral * dt * integral + Kderivative * derivative;
+
+   // save error value for period.
+   //previous_error = error;
+
+   // Controll left motor
+   //left = speed - output;
+   
+   // Controll right motor
+   //right = speed + output;
+
+   // Adjust the left and right motor value.
+   //if (left >   100) left  =  100;
+   //if (left <  -100) left  = -100;
+   //if (right >  100) right =  100;
+   //if (right < -100) right = -100;
+
+	OnRev(OUT_AB, speed);
+
+   if (left < 0 )
+     {
+      OnFwd(OUT_A,-left);
+      TextOut(1,LCD_LINE4,"Left  Rev");
+      NumOut(55,LCD_LINE4,-left);
+     }
+   else
+     {
+      OnRev(OUT_A,left);
+      TextOut(1,LCD_LINE4,"Left  Fwd");
+      NumOut(55,LCD_LINE4,left);
+     }
+
+   if (right < 0 )
+     {
+       OnFwd(OUT_B,-right);
+       TextOut(1,LCD_LINE5,"Right Rev");
+       NumOut(55,LCD_LINE5,-right);
+      }
+    else
+      {
+       OnRev(OUT_B,right);
+       TextOut(1,LCD_LINE5,"Right Fwd");
+       NumOut(55,LCD_LINE5,right);
+       }
+
+   // Wait sample time.
+   Wait(dt);
+   }*/
+}
