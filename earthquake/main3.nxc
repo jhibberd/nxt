@@ -1,94 +1,67 @@
-/* Techbricks.nl Line Follower
-   Based on a PID controller, using the NXT 2.0 color sensor
-   NXC firmware 1.28
-   www.techbricks.nl
-   last modified 03/03/2010                                    */
-
 /* Proportional gain, straight forward reaction of the controller
    Larger values typically mean faster response since the larger the error,
    the larger the proportional term compensation.
    An excessively large proportional gain will lead to process instability and oscillation.*/
-#define Kproportional 2
+#define Kproportional 1
 
 /* Integral gain, improves the controller accuracy
    Larger values imply steady state errors are eliminated more quickly.
    The trade-off is larger overshoot: any negative error integrated during transient response
    must be integrated away by positive error before reaching steady state.*/
 //#define Kintegral 0.0002
-#define Kintegral 0.0001
+#define Kintegral 0.00006
 
 /* Derivative gain, improves the controller speed
    Larger values decrease overshoot, but slow down transient response
    and may lead to instability due to signal noise amplification in the differentiation of the error.*/
 //#define Kderivative 100
-#define Kderivative 40
+#define Kderivative 400
 
 // Sample time, determined the reaction rate
 //#define dt 20
-#define dt 1000
+#define dt 50
 
 // NXT 2.0 Color sensor connected to port 2.
 #define COLORSENSOR SENSOR_1
 
-// NOTE: If -1 then it means the error has been processed and waiting for next
-// error to be produced by scanner.
-int error2 = 0;
+sub print(int line_num, string name, int value) {
+	TextOut(0, line_num, "                        ");
+	TextOut(0, line_num, name);
+	NumOut(40, line_num, value);
+}
 
-// NOTE: Should probably have accompanying bool to say whether it has been set.
-int error_stable = -999;
+
+int error_stable = 0;
 int error_cycle_lowest = 0;
 bool error_cycle_lowest_set = false;
 
-// NOTE: Starts in rightmost position.
-// This performs scan *cycles*
+/* Scan (starting from rightmost position) to the leftmost position and back
+ * again and detect the line offset error. An error of 0 means the robot does
+ * not need to change course, a positive error means the robot must steer right,
+ * and a negative error means the robot must steer left.
+ */
 #define SCAN_ANGLE 60
-#define SCAN_SPEED 10
+#define SCAN_SPEED 40
 task scan_color_sensor() {
+	bool right_to_left = true;
 	while (true) {
-		RotateMotor(OUT_C, SCAN_SPEED, SCAN_ANGLE);
-		RotateMotor(OUT_C, -SCAN_SPEED, SCAN_ANGLE);
-		// If at this point error_this_scan is empty then there is no line
-		// to be found.
+		int speed = right_to_left ? SCAN_SPEED : -SCAN_SPEED;
+		RotateMotor(OUT_C, speed, SCAN_ANGLE);
+		//RotateMotor(OUT_C, -SCAN_SPEED, SCAN_ANGLE);
+		// Play a sound if the line wasn't found during the last cycle.
+		if (!error_cycle_lowest_set) {
+			PlayTone(TONE_B7, 1);
+			// TODO(jhibberd) Instigate line search behaviour.
+		}
 		error_stable = error_cycle_lowest;
 		error_cycle_lowest = 0;
 		error_cycle_lowest_set = false;
+		
+		right_to_left = !right_to_left;
 	}
 }
 
-// NOTE: rotation 0=far right, 60(SCAN_ANGLE)=far left
-task read_color_sensor() {
-	float setpoint = 1;
-	while (true) {
-		// Returns angle between 0 (far left) and SCAN_ANGLE (far right)
-		// An angle of SCAN_ANGLE/2 should be straight ahead
-		long rotation = MotorRotationCount(OUT_C);
-		NumOut(50,LCD_LINE2,rotation);
-		TextOut(50, LCD_LINE4, "        ");
-		NumOut(50,LCD_LINE4,error_cycle_lowest);
-		TextOut(50, LCD_LINE6, "        ");
-		NumOut(50,LCD_LINE6,error_stable);
-		float actual_position = COLORSENSOR;
-   		int error = setpoint - actual_position;
-   		if (error == 0) {	
-   			// 0 => +30, 60 => -30
-   			// angle - 30... angle = -angle
-   			int error3 = rotation - (SCAN_ANGLE/2);
-   			error3 = -error3;
-   			
-   			// Need error that's closest to zero (on either side)
-   			// can use abs(error3)
-   			if (!error_cycle_lowest_set || abs(error3) < abs(error_cycle_lowest)) {
-   				error_cycle_lowest = error3;
-   				error_cycle_lowest_set = true;
-   			}
-   			
-   			NumOut(50,LCD_LINE3,error3);
-   		}	
-   }
-}
 
-task main()
-{
 int error = 0;
 float previous_error = 0;
 float setpoint = 0;
@@ -99,6 +72,98 @@ float derivative = 0;
 float output = 0;
 float left = 0;
 float right = 0;
+int speed = 15;
+
+// NOTE: rotation 0=far right, 60(SCAN_ANGLE)=far left
+task read_color_sensor() {
+	float setpoint = 1;
+	while (true) {
+
+		float actual_position = COLORSENSOR;
+   		if (actual_position == setpoint) {	
+
+			// Returns angle between 0 (far right) and SCAN_ANGLE (far left)
+			// 60 .. 30 .. 0
+			// An angle of SCAN_ANGLE/2 should be straight ahead
+			long rotation = MotorRotationCount(OUT_C);
+			print(LCD_LINE3, "R1", rotation);   			
+   			int std_rotation = rotation - (SCAN_ANGLE/2);
+   			std_rotation = -std_rotation;
+   			print(LCD_LINE4, "R2", std_rotation);  
+   			
+   			print(LCD_LINE5, "E", error_stable);
+   			print(LCD_LINE6, "O", output);
+   			print(LCD_LINE7, "L", left);
+   			print(LCD_LINE8, "R", right);
+   			
+   			// Need error that's closest to zero (on either side)
+   			// can use abs(error3)
+   			if (!error_cycle_lowest_set || abs(std_rotation) < abs(error_cycle_lowest)) {
+   				error_cycle_lowest = std_rotation;
+   				error_cycle_lowest_set = true;
+   			}
+   			
+   		}	
+	}
+}
+
+task move() {
+	while (true) {
+		
+		error = error_stable;
+	
+		//print(LCD_LINE5, "E", error);	
+		
+		// Proportional term makes a change to the output that is proportional to the current error value.
+		proportional = Kproportional * error;
+
+		// Integrate, sum of errors
+		integral = integral + error;
+
+   		// Derivative, rate of change of the process error is calculated by determining the slope of the error over time.
+		derivative = (error - previous_error) / dt;
+
+		// Calculate sum of Proportional, Integral and Derivative.
+		output = proportional + Kintegral * dt * integral + Kderivative * derivative;
+
+		// save error value for period.
+		previous_error = error;
+
+		//TextOut(0, LCD_LINE6, "O");
+		// Output appears to be between -70 and + 70
+		//NumOut(50, LCD_LINE6, output);
+
+		// Limit
+		output = output / 5;
+		if (output > 50) {
+			output = 50;
+		} 
+
+		int speed2 = speed + abs(output);
+		if (abs(output) < 5) {
+			OnFwd(OUT_AB, speed);
+		} else if (output < 0) {
+			OnRev(OUT_A, speed2);
+			OnFwd(OUT_B, speed2);
+		} else {
+			OnFwd(OUT_A, speed2);
+			OnRev(OUT_B, speed2);
+		}
+		
+		//print(LCD_LINE7, "L", left);
+		//print(LCD_LINE8, "R", right);
+		
+		// OnFwd(OUT_A, left);
+		// OnFwd(OUT_B, right);
+
+		// Wait sample time.
+		Wait(dt);		
+	}
+}
+
+task main()
+{
+
 
 // Set the motor speed.
 float speed=20;
@@ -111,7 +176,7 @@ TextOut(1,LCD_LINE1,"Setpoint");
 setpoint = COLORSENSOR;
 NumOut(50,LCD_LINE1,setpoint);
 
-Precedes(scan_color_sensor, read_color_sensor);
+Precedes(scan_color_sensor, read_color_sensor, move);
 
 /*
 // never ending loop.
