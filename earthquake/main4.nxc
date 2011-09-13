@@ -1,72 +1,24 @@
+
+task rotate() {
+	while (true) {
+		RotateMotorEx(OUT_A, 100, 100, 0, false, false);
+		RotateMotorEx(OUT_A, 100, -100, 0, false, false);
+		ResetRotationCount(OUT_A);
+	}
+	//OnFwdEx(OUT_A, 30, RESET_ROTATION_COUNT);
+
+}
+
+task read() {
+	while (true) {
+		long rotation = MotorRotationCount(OUT_A);
+		TextOut(0, LCD_LINE1, "        ");
+		NumOut(0, LCD_LINE1, rotation);
+	}
+}
+
 task main() {
-     int color;
-     int turn;
-     int threshold;
-     int power = 90;
-     int min = 999;
-     int max = -1;
-     unsigned long end_time;
-     
-     SetSensorColorRed(IN_1);
-     Wait(200);
-     
-     // calibration: turn left
 
-     end_time = CurrentTick() + 500;
-     OnRev(OUT_A, 50);
-     OnFwd(OUT_B, 50);
-     while (CurrentTick() < end_time) {
-         color = Sensor(IN_1);
-         if (color > max) {
-             max = color;
-         } else if (color < min) {
-             min = color;
-         }
-     }
+	Precedes(rotate, read);
 
-     // calibration: turn right
-
-     end_time = CurrentTick() + 1000;
-     OnRev(OUT_B, 50);
-     OnFwd(OUT_A, 50);
-     while (CurrentTick() < end_time) {
-         color = Sensor(IN_1);
-         if (color > max) {
-             max = color;
-         } else if (color < min) {
-             min = color;
-         }
-     }
-
-     threshold = (min+max)/2;
-
-     ClearLine(LCD_LINE3);
-     NumOut(40, LCD_LINE3, threshold);
-
-     // calibration done, find the edge of the line
-
-     OnRev(OUT_A, 50);
-     OnFwd(OUT_B, 50);
-     while (Sensor(IN_1) > threshold) {
-     }
-     Off(OUT_AB);
-
-     // and follow it
-     
-     while (true) {
-         color = Sensor(IN_1);
-
-         turn = power+200*(threshold-color)/(max-min);
-         if (turn > 100)
-            turn = 100;
-         if (turn < 0)
-            turn = 0;
-         OnFwd(OUT_B, turn);
-         turn = power-200*(threshold-color)/(max-min);
-         if (turn > 100)
-            turn = 100;
-         if (turn < 0)
-            turn = 0;
-         OnRev(OUT_A, turn);
-     }
 }
