@@ -1,27 +1,9 @@
-/* Proportional gain, straight forward reaction of the controller
-   Larger values typically mean faster response since the larger the error,
-   the larger the proportional term compensation.
-   An excessively large proportional gain will lead to process instability and oscillation.*/
-#define Kproportional 1
-
-/* Integral gain, improves the controller accuracy
-   Larger values imply steady state errors are eliminated more quickly.
-   The trade-off is larger overshoot: any negative error integrated during transient response
-   must be integrated away by positive error before reaching steady state.*/
-//#define Kintegral 0.0002
-#define Kintegral 0.00006
-
-/* Derivative gain, improves the controller speed
-   Larger values decrease overshoot, but slow down transient response
-   and may lead to instability due to signal noise amplification in the differentiation of the error.*/
-//#define Kderivative 100
-#define Kderivative 400
 
 // Sample time, determined the reaction rate
 //#define dt 20
 #define dt 50
 
-// NXT 2.0 Color sensor connected to port 2.
+// NXT 2.0 Color sensor connected to port 1.
 #define COLORSENSOR SENSOR_1
 
 sub print(int line_num, string name, int value) {
@@ -40,14 +22,15 @@ bool error_cycle_lowest_set = false;
  * not need to change course, a positive error means the robot must steer right,
  * and a negative error means the robot must steer left.
  */
-#define SCAN_ANGLE 60
-#define SCAN_SPEED 40
+#define SCAN_ANGLE 70
+#define SCAN_SPEED 90
 task scan_color_sensor() {
 	bool right_to_left = true;
 	while (true) {
-		int speed = right_to_left ? SCAN_SPEED : -SCAN_SPEED;
-		RotateMotor(OUT_C, speed, SCAN_ANGLE);
-		//RotateMotor(OUT_C, -SCAN_SPEED, SCAN_ANGLE);
+		int angle = right_to_left ? SCAN_ANGLE : -SCAN_ANGLE;
+		RotateMotorEx(OUT_C, SCAN_SPEED, angle, 0, false, false);
+		right_to_left = !right_to_left;
+				
 		// Play a sound if the line wasn't found during the last cycle.
 		if (!error_cycle_lowest_set) {
 			PlayTone(TONE_B7, 1);
@@ -56,13 +39,11 @@ task scan_color_sensor() {
 		error_stable = error_cycle_lowest;
 		error_cycle_lowest = 0;
 		error_cycle_lowest_set = false;
-		
-		right_to_left = !right_to_left;
 	}
 }
 
 
-int error = 0;
+float error = 0;
 float previous_error = 0;
 float setpoint = 0;
 float actual_position = 0;
@@ -72,7 +53,7 @@ float derivative = 0;
 float output = 0;
 float left = 0;
 float right = 0;
-int speed = 15;
+int speed = 30;
 
 // NOTE: rotation 0=far right, 60(SCAN_ANGLE)=far left
 task read_color_sensor() {
@@ -111,50 +92,37 @@ task move() {
 	while (true) {
 		
 		error = error_stable;
-	
-		//print(LCD_LINE5, "E", error);	
-		
-		// Proportional term makes a change to the output that is proportional to the current error value.
-		proportional = Kproportional * error;
 
-		// Integrate, sum of errors
-		integral = integral + error;
+		error = error * 4;	
 
-   		// Derivative, rate of change of the process error is calculated by determining the slope of the error over time.
-		derivative = (error - previous_error) / dt;
-
-		// Calculate sum of Proportional, Integral and Derivative.
-		output = proportional + Kintegral * dt * integral + Kderivative * derivative;
-
-		// save error value for period.
-		previous_error = error;
-
-		//TextOut(0, LCD_LINE6, "O");
-		// Output appears to be between -70 and + 70
-		//NumOut(50, LCD_LINE6, output);
-
-		// Limit
-		output = output / 5;
-		if (output > 50) {
-			output = 50;
-		} 
-
-		int speed2 = speed + abs(output);
-		if (abs(output) < 5) {
-			OnFwd(OUT_AB, speed);
-		} else if (output < 0) {
-			OnRev(OUT_A, speed2);
-			OnFwd(OUT_B, speed2);
-		} else {
-			OnFwd(OUT_A, speed2);
-			OnRev(OUT_B, speed2);
+		if (error == 0) {
+			left = speed;
+			right = speed;
+		} else if (error < 0) { // line is to the left
+			left = speed - (abs(error) / 2);
+			right = speed + (abs(error) / 2);
+		} else if (error > 0) { // line is to the right
+			left = speed + (error / 2);
+			right = speed - (error / 2);
 		}
 		
-		//print(LCD_LINE7, "L", left);
-		//print(LCD_LINE8, "R", right);
+		if (left > 100) {
+			left = 100;
+		}
+		if (right > 100) {
+			right = 100;
+		}
 		
-		// OnFwd(OUT_A, left);
-		// OnFwd(OUT_B, right);
+		if (left >= 0) {
+			OnFwd(OUT_A, left);
+		} else {
+			OnRev(OUT_A, abs(left));
+		}
+		if (right >= 0) {
+			OnFwd(OUT_B, right);
+		} else {
+			OnRev(OUT_B, abs(right));
+		}
 
 		// Wait sample time.
 		Wait(dt);		
@@ -163,141 +131,17 @@ task move() {
 
 task main()
 {
-
-
-// Set the motor speed.
-float speed=20;
-
-// Set the color sensor light on.
-SetSensorColorFull(IN_1);
-
-// Read the value from the light sensor at the start position. The sensor must be place above the black line.
-TextOut(1,LCD_LINE1,"Setpoint");
-setpoint = COLORSENSOR;
-NumOut(50,LCD_LINE1,setpoint);
-
-Precedes(scan_color_sensor, read_color_sensor, move);
-
-/*
-// never ending loop.
-while (true)
-  {
-   // Read the actual color sensor value.
-   actual_position = COLORSENSOR;
-   TextOut(1,LCD_LINE2,"Actual");
-   NumOut(50,LCD_LINE2,actual_position);
-
-
-	PlayTone(TONE_B7, 1);
+	// Set the motor speed.
+	float speed=20;
 	
+	// Set the color sensor light on.
+	SetSensorColorFull(IN_1);
+	
+	// Read the value from the light sensor at the start position. The sensor must be place above the black line.
+	TextOut(1,LCD_LINE1,"Setpoint");
+	setpoint = COLORSENSOR;
+	NumOut(50,LCD_LINE1,setpoint);
+	
+	Precedes(scan_color_sensor, read_color_sensor, move);
 
-
-   // Calculate the error, the differance between the setpoint and actual position.
-   error = setpoint - actual_position;
-   // Play a sound when the sensor is off the line
-   if (error <> 0) {	
-   	
-   	
-   		PlayTone(TONE_B7, 1);
-   		
-   		bool hit = false;
-   		for (int i = 0; i < 35; i++) {
-   			OnRev(OUT_A, 30);
-   			OnFwd(OUT_B, 30);
-   			Wait(30);
-   			actual_position = COLORSENSOR;
-   			if (actual_position == setpoint) {
-   				PlayTone(TONE_B7, 1);
-   				PlayTone(TONE_B3, 1);
-   				PlayTone(TONE_B7, 1);
-   				PlayTone(TONE_B3, 1);
-   				hit = true;
-   				break;
-   			}
-   		}
-   	
-   		if (!hit) {
-   			
-   			// back to middle
-   			OnRev(OUT_B, 30);
-	   		OnFwd(OUT_A, 30);
-   			Wait(30 * 35);
-   			
-	     	for (int i = 0; i < 35; i++) {
-	   			OnRev(OUT_B, 30);
-	   			OnFwd(OUT_A, 30);
-	   			Wait(30);
-	   			actual_position = COLORSENSOR;
-	   			if (actual_position == setpoint) {
-	   				PlayTone(TONE_B7, 1);
-	   				PlayTone(TONE_B7, 1);
-	   				PlayTone(TONE_B7, 1);
-	   				PlayTone(TONE_B3, 1);	   				
-	   				hit = true;
-	   				break;
-	   			}
-	   		}
-	   	}
-	   	error = 0;
-   		PlayTone(TONE_B3, 1);
-   }
-
-   // Proportional term makes a change to the output that is proportional to the current error value.
-   //proportional = Kproportional * error;
-
-   // Integrate, sum of errors
-   //integral = integral + error;
-
-   // Derivative, rate of change of the process error is calculated by determining the slope of the error over time.
-   //derivative = (error - previous_error) / dt;
-
-   // Calculate sum of Proportional, Integral and Derivative.
-   //output = proportional + Kintegral * dt * integral + Kderivative * derivative;
-
-   // save error value for period.
-   //previous_error = error;
-
-   // Controll left motor
-   //left = speed - output;
-   
-   // Controll right motor
-   //right = speed + output;
-
-   // Adjust the left and right motor value.
-   //if (left >   100) left  =  100;
-   //if (left <  -100) left  = -100;
-   //if (right >  100) right =  100;
-   //if (right < -100) right = -100;
-
-	OnRev(OUT_AB, speed);
-
-   if (left < 0 )
-     {
-      OnFwd(OUT_A,-left);
-      TextOut(1,LCD_LINE4,"Left  Rev");
-      NumOut(55,LCD_LINE4,-left);
-     }
-   else
-     {
-      OnRev(OUT_A,left);
-      TextOut(1,LCD_LINE4,"Left  Fwd");
-      NumOut(55,LCD_LINE4,left);
-     }
-
-   if (right < 0 )
-     {
-       OnFwd(OUT_B,-right);
-       TextOut(1,LCD_LINE5,"Right Rev");
-       NumOut(55,LCD_LINE5,-right);
-      }
-    else
-      {
-       OnRev(OUT_B,right);
-       TextOut(1,LCD_LINE5,"Right Fwd");
-       NumOut(55,LCD_LINE5,right);
-       }
-
-   // Wait sample time.
-   Wait(dt);
-   }*/
 }
