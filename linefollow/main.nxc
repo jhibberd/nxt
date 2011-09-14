@@ -1,0 +1,142 @@
+/* Line Following Robot
+ * version 1
+ */
+
+int error_stable = 0;
+int error_cycle_lowest = 0;
+bool error_cycle_lowest_set = false;
+float left = 0;
+float right = 0;
+
+/* Scan (starting from rightmost position) to the leftmost position and back
+ * again and detect the line offset error. An error of 0 means the robot does
+ * not need to change course, a positive error means the robot must steer right,
+ * and a negative error means the robot must steer left.
+ * 
+ * A sound is played if the light sensor does not detect the tracking line 
+ * within a single scan cycle.
+ */
+#define SCAN_ANGLE 70
+#define SCAN_SPEED 90
+task scan_color_sensor() {
+	bool right_to_left = true;
+	while (true) {
+		int angle = right_to_left ? SCAN_ANGLE : -SCAN_ANGLE;
+		RotateMotorEx(OUT_C, SCAN_SPEED, angle, 0, false, false);
+		right_to_left = !right_to_left;				
+		if (!error_cycle_lowest_set) {
+			PlayTone(TONE_B7, 1);
+		}
+		error_stable = error_cycle_lowest;
+		error_cycle_lowest = 0;
+		error_cycle_lowest_set = false;
+	}
+}
+
+// NOTE: rotation 0=far right, 60(SCAN_ANGLE)=far left
+
+/* Scan the light sensor from right to left, then back again, repeatedly. If
+ * during the scan the tracking line is detected, read the current rotation
+ * value of the motor performing the scan to determine whether the line is
+ * to the left or to the right. 
+ * 
+ * (left) SCAN_ANGLE ... (center) SCAN_ANGLE/2 ... (right) 0
+ * 
+ * When the tracking line is detected only record the rotation value if the
+ * existing rotation value either doesn't exist or is larger than the current
+ * value. The line may be thick and so multiple rotation values will detect
+ * the tracking line; we need to record the rotation value closest to the
+ * center.
+ * 
+ * After every scan cycle the lowest recorded rotation angle at which the
+ * tracking line was found is updated to the error_stable global variable
+ * which acts as a stable indication of the robot's deviation from the tracking
+ * line.
+ * 
+ * (left) -(SCAN_ANGLE/2) ... (center/no error)0 ... (right) SCAN_ANGLE/2
+ */
+#define SETPOINT 1
+#define COLORSENSOR SENSOR_1
+task read_color_sensor() {
+	while (true) {
+		float actual_position = COLORSENSOR;
+   		if (actual_position == SETPOINT) {	
+
+			long rotation = MotorRotationCount(OUT_C); 			
+   			int std_rotation = rotation - (SCAN_ANGLE/2);
+   			std_rotation = -std_rotation;
+   			
+			print(LCD_LINE3, "R1", rotation);     			
+   			print(LCD_LINE4, "R2", std_rotation);     			
+   			print(LCD_LINE5, "E", error_stable);
+   			print(LCD_LINE7, "L", left);
+   			print(LCD_LINE8, "R", right);
+   			
+   			if (!error_cycle_lowest_set || 
+   				abs(std_rotation) < abs(error_cycle_lowest)) {
+   				error_cycle_lowest = std_rotation;
+   				error_cycle_lowest_set = true;
+   			}
+   		}	
+	}
+}
+
+/* Move the robot forward, adjusting the relative speeds/power of the left and
+ * right wheels/motors. To steer to the right the power on the left wheel is
+ * increased and the power on the right wheel is decreased. The amount of 
+ * increase and decrease applied to both wheels is equal and proportional
+ * to the current error value (the degree to which the tracking line deviates
+ * from the direction in which the robot is currently travelling). A sample
+ * time wait is applied between motor power adjustments for stability.
+ */
+#define ERROR_MULTIPLIER 4
+#define MOTOR_MAX_POWER 100
+#define SAMPLE_TIME 50 
+#define SPEED 30
+task move() {
+	while (true) {
+		float error = error_stable * ERROR_MULTIPLIER;
+		float half_error = abs(error) / 2;
+		
+		if (error =< 0) { 
+			// Tracking line is off to the left.
+			// This clause handles an error of 0 (ie. tracking line is straight
+			// ahead) although it could just as easily be handled by the second
+			// clause.
+			left = SPEED - half_error;
+			right = SPEED + half_error;
+		} else if (error > 0) { 
+			// Tracking line is off to the right.
+			left = SPEED + half_error;
+			right = SPEED - half_error;
+		} 
+		
+		if (left > MOTOR_MAX_POWER) left = MOTOR_MAX_POWER;
+		if (right > MOTOR_MAX_POWER) right = MOTOR_MAX_POWER;
+		
+		if (left >= 0) OnFwd(OUT_A, left);
+		else OnRev(OUT_A, abs(left));
+		
+		if (right >= 0) OnFwd(OUT_B, right);
+		else OnRev(OUT_B, abs(right));
+
+		Wait(SAMPLE_TIME);		
+	}
+}
+
+/* Activate the color sensor then begin the 3 parallel tasks: moving the light
+ * sensor to act as a scanner, reading the light sensor value to detect the
+ * relative position of the tracking line, setting the speed of the left and
+ * right wheels.
+ */
+task main() {
+	SetSensorColorFull(IN_1);	
+	Precedes(scan_color_sensor, read_color_sensor, move);
+}
+
+// Debug helper function for writing values to robot terminal.
+sub print(int line_num, string name, int value) {
+	TextOut(0, line_num, "                        ");
+	TextOut(0, line_num, name);
+	NumOut(40, line_num, value);
+}
